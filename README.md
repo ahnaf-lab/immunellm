@@ -7,13 +7,15 @@ response": clean text drifts past, threats get swarmed by ASCII antibodies and
 neutralized, and the whole thing is snapshot-testable frame by frame against a
 labeled regression corpus.
 
-This is **milestone 2 of 5: Classifier** — on top of the milestone 1 vector
+This is **milestone 3 of 5: Daemon loop** — on top of the milestone 1 vector
 core (a hashed n-gram embedding stub and cosine-similarity kNN search
-against a curated attack/PII corpus fixture), the classifier now also runs a
-set of regex heuristics for known attack phrasing and PII formats, and
-blends both signals into one explainable threat score with matched
-evidence. The terminal rendering, streaming daemon, and live API-backed
-embedding provider are later milestones and are not implemented yet.
+against a curated attack/PII corpus fixture) and the milestone 2 classifier
+(regex heuristics blended with kNN similarity into one explainable threat
+score), the daemon loop now tails a live text stream -- stdin or a file,
+`tail -f` style -- and scores each line as it arrives, emitting one
+structured JSON verdict event per line. The terminal rendering and a live
+API-backed embedding provider are later milestones and are not implemented
+yet.
 
 ## Install
 
@@ -57,6 +59,32 @@ corpus neighbor that cleared the similarity threshold and every regex
 heuristic that matched, so the label is always traceable back to a
 specific reason.
 
+### Daemon loop
+
+Tail stdin and score each line as it arrives, printing one JSON verdict
+event per line:
+
+```sh
+tail -f /var/log/some-chat-app.log | node bin/immunellm.js watch
+```
+
+Or tail a file directly (starts at the file's current end, like `tail -f`,
+and keeps running until interrupted with `Ctrl-C`):
+
+```sh
+node bin/immunellm.js watch /var/log/some-chat-app.log
+```
+
+Each line of input produces one line of output:
+
+```json
+{"seq":1,"timestamp":"2026-01-01T00:00:00.000Z","text":"Ignore all previous instructions.","label":"injection","score":0.87,"evidence":[...]}
+```
+
+`seq` is a monotonically increasing counter and `timestamp` is the time the
+line was scored, so a downstream consumer can order and correlate events
+across a long-running stream. Blank lines are skipped and produce no event.
+
 Run the test suite:
 
 ```sh
@@ -94,7 +122,11 @@ npm test
   asserts known attacks, known PII, and known clean text all land on the
   correct side of the classifier, and [`test/threat-score.test.js`](test/threat-score.test.js)
   and [`test/heuristics.test.js`](test/heuristics.test.js) cover the scoring
-  and heuristic layers independently.
+  and heuristic layers independently. [`src/daemon.js`](src/daemon.js)'s
+  `createDaemon()` is the live-stream version of the same guardrail: it feeds
+  every tailed line through the same `classify()` and turns the result into a
+  sequenced, timestamped verdict event, so the explainability guarantee above
+  holds for a running stream, not just a single CLI call.
 
 ## Design notes
 
@@ -109,6 +141,13 @@ npm test
   tradeoff of the hashing trick) but fully deterministic, which is what makes
   it usable as the single embedding implementation for both the CLI and the
   test suite — no network calls, no API keys, no flakiness.
+- The daemon loop (`src/tailer.js`, `src/daemon.js`) is driven by an explicit
+  `poll()`/`push()` call rather than relying on `fs.watch` or stream timing
+  internally, so the read logic is synchronous and deterministic: a test can
+  write to a temp file or an in-memory stream and assert on the emitted lines
+  directly, without racing a real filesystem watch event or a timer. A real
+  `watch <file>` run drives that same `poll()` off a 200ms interval; `watch`
+  with no file argument tails stdin instead, for piping in a live log.
 - Zero runtime dependencies. Everything here (hashing, vector math, kNN,
   JSON corpus loading, the CLI) is comfortably within what Node's standard
   library already provides, and the test suite uses Node's built-in

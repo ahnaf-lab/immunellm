@@ -1,0 +1,16 @@
+{
+  "name": "immunellm",
+  "version": "0.1.0",
+  "description": "Prompt-injection and PII detection via embedding-similarity nearest-neighbor search, rendered as a live terminal immune response.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "immunellm": "./bin/immunellm.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { createNgramEmbedder } from "../src/ngram-embedder.js";
-import { loadCorpus } from "../src/corpus.js";
+import { loadCorpus, loadRegressionCorpus } from "../src/corpus.js";
 import { createClassifier } from "../src/classifier.js";
 import { createDaemon } from "../src/daemon.js";
 import { tailReadable, createFileTailer } from "../src/tailer.js";
 import { createAnimator } from "../src/animator.js";
+import { evaluateCorpus } from "../src/evaluate.js";
 
 const WATCH_POLL_INTERVAL_MS = 200;
 
@@ -62,6 +63,19 @@ function createAnimatedOnVerdict() {
   };
 }
 
+/**
+ * Runs the classifier over the held-out regression corpus
+ * (data/regression-corpus.json, never used to build the kNN index) and
+ * prints a precision/recall/F1 report, broken down per label, plus every
+ * misclassified case.
+ */
+function runReport() {
+  const { classify } = buildClassifier();
+  const cases = loadRegressionCorpus();
+  const report = evaluateCorpus({ classify, cases });
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+}
+
 async function runOnce(text) {
   const { classify } = buildClassifier();
   const result = roundForDisplay(classify(text));
@@ -117,6 +131,11 @@ async function main() {
     return;
   }
 
+  if (args[0] === "report") {
+    runReport();
+    return;
+  }
+
   const argText = args.join(" ");
   const text = argText.length > 0 ? argText : (await readStdin()).trim();
 
@@ -124,7 +143,8 @@ async function main() {
     process.stderr.write(
       "usage: immunellm <text to check>              classify one piece of text (or pipe via stdin)\n" +
         "       immunellm watch [file]                 daemon loop: tail stdin or a file, one verdict event per line\n" +
-        "       immunellm watch [file] --animate       daemon loop, rendered as an ASCII swarm/drift animation\n",
+        "       immunellm watch [file] --animate       daemon loop, rendered as an ASCII swarm/drift animation\n" +
+        "       immunellm report                       precision/recall report against the held-out regression corpus\n",
     );
     process.exitCode = 1;
     return;

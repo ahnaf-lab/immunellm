@@ -7,17 +7,23 @@ response": clean text drifts past, threats get swarmed by ASCII antibodies and
 neutralized, and the whole thing is snapshot-testable frame by frame against a
 labeled regression corpus.
 
-This is **milestone 4 of 5: Immune animation** — on top of the milestone 1
+This is **milestone 5 of 5: Regression suite** — on top of the milestone 1
 vector core (a hashed n-gram embedding stub and cosine-similarity kNN search
 against a curated attack/PII corpus fixture), the milestone 2 classifier
 (regex heuristics blended with kNN similarity into one explainable threat
-score), and the milestone 3 daemon loop (tailing a live text stream and
-emitting one structured JSON verdict event per line), every verdict event
-can now be rendered as a short ASCII animation: clean text drifts past
-untouched, and a threat gets swarmed by antibody glyphs that close in from
-both margins before leaving a neutralized, scrubbed line behind. A live
-API-backed embedding provider is a later milestone and is not implemented
-yet.
+score), the milestone 3 daemon loop (tailing a live text stream and emitting
+one structured JSON verdict event per line), and the milestone 4 immune
+animation (rendering each verdict as ASCII swarm/drift frames), the project
+now ships a second, held-out labeled corpus
+([`data/regression-corpus.json`](data/regression-corpus.json)) that is
+*never* used to build the kNN index, a precision/recall/F1 report
+([`src/evaluate.js`](src/evaluate.js)) that scores the classifier against it,
+and a golden-frame fixture
+([`test/fixtures/golden-frames.json`](test/fixtures/golden-frames.json))
+that freezes the exact animation output for every case in that corpus so a
+regression in embedding, scoring, heuristics, or rendering shows up as a
+failing test rather than a silent drift. A live API-backed embedding
+provider is a later milestone and is not implemented yet.
 
 ## Install
 
@@ -109,6 +115,34 @@ that triggered it:
 [NEUTRALIZED:injection] ##################################################
 ```
 
+### Regression report
+
+Run the classifier against the held-out regression corpus
+(`data/regression-corpus.json`) and print a precision/recall/F1 report, per
+label, plus every misclassified case:
+
+```sh
+node bin/immunellm.js report
+```
+
+```json
+{
+  "total": 18,
+  "accuracy": 1,
+  "perLabel": {
+    "injection": { "precision": 1, "recall": 1, "f1": 1, "support": 6 },
+    "pii": { "precision": 1, "recall": 1, "f1": 1, "support": 6 },
+    "clean": { "precision": 1, "recall": 1, "f1": 1, "support": 6 }
+  },
+  "misclassified": []
+}
+```
+
+The cases in `data/regression-corpus.json` are paraphrases of the attack/PII/
+clean themes in `data/corpus.json`, written independently so the kNN index
+has never seen their exact wording -- this measures how well the classifier
+generalizes, not how well it memorizes its own index.
+
 Run the test suite:
 
 ```sh
@@ -131,7 +165,12 @@ npm test
   returns that score alongside an `evidence` list -- every point of score
   traces back to either a specific corpus neighbor or a specific matched
   pattern, which is what makes the output explainable rather than an opaque
-  number.
+  number. [`src/evaluate.js`](src/evaluate.js)'s `evaluateCorpus()` turns
+  that guardrail into a measured one: it runs the classifier over
+  [`data/regression-corpus.json`](data/regression-corpus.json) (a held-out
+  set the kNN index never sees) and reports precision, recall, and F1 per
+  label, so "does the guardrail actually work" has a number attached to it
+  instead of being asserted by anecdote.
 
 - **Embeddings and vector search (indexing, ANN, similarity, evaluation):**
   [`src/ngram-embedder.js`](src/ngram-embedder.js)'s `createNgramEmbedder()`
@@ -150,10 +189,31 @@ npm test
   `createDaemon()` is the live-stream version of the same guardrail: it feeds
   every tailed line through the same `classify()` and turns the result into a
   sequenced, timestamped verdict event, so the explainability guarantee above
-  holds for a running stream, not just a single CLI call.
+  holds for a running stream, not just a single CLI call. The evaluation
+  itself is evaluation-of-a-search-system in miniature:
+  [`test/evaluate.test.js`](test/evaluate.test.js) checks the precision/
+  recall/F1 math against a fake classifier with a known confusion pattern,
+  then re-runs it against the *real* kNN+heuristics classifier on the held-out
+  corpus and asserts accuracy and per-label recall stay above a floor --
+  a regression test for retrieval quality, not just for individual outputs.
+  [`test/golden-frames.test.js`](test/golden-frames.test.js) extends the same
+  idea to the rendering layer: every held-out case's animation frames are
+  frozen in [`test/fixtures/golden-frames.json`](test/fixtures/golden-frames.json)
+  and compared byte-for-byte on every run, so a change anywhere in the
+  pipeline -- embedding, kNN weighting, heuristics, or the frame renderer --
+  that shifts output on *any* corpus case fails loudly instead of drifting
+  unnoticed.
 
 ## Design notes
 
+- `data/regression-corpus.json` is deliberately a *second* corpus, not a
+  slice of `data/corpus.json`: the kNN index in `src/classifier.js` is built
+  only from the latter, so scoring against the former tests generalization
+  to unseen phrasing rather than nearest-neighbor recall of the exact text
+  the index already contains. The accuracy/recall floors in
+  `test/evaluate.test.js` are set below the corpus's current 100% to leave
+  room for adding harder regression cases later without the test suite
+  itself needing surgery.
 - The final threat score blends two independent, equally-inspectable
   signals rather than training a combined model: kNN cosine similarity
   (weight 0.6) and regex heuristic matches (weight 0.4), per label, with the

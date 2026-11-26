@@ -45,10 +45,9 @@ async function main() {
         text,
         label: result.label,
         score: Number(result.score.toFixed(4)),
-        nearest: result.neighbors.slice(0, 3).map((n) => ({
-          id: n.id,
-          label: n.label,
-          score: Number(n.score.toFixed(4)),
+        evidence: result.evidence.map((e) => ({
+          ...e,
+          score: Number(e.score.toFixed(4)),
         })),
       },
       null,
